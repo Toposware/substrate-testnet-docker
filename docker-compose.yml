@@ -1,0 +1,62 @@
+version: '3.3'
+services:
+  traefik:
+    image: "traefik:v2.2"
+    container_name: "traefik"
+    restart: always
+    command:
+      # - "--log.level=DEBUG" # Uncomment this line if you need debug logs
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.myresolver.acme.httpchallenge=true"
+      - "--certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.myresolver.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory" # Comment this line when you're ready for production TLS certificates
+      - "--certificatesresolvers.myresolver.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - "./letsencrypt:/letsencrypt"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+  validator-alice:
+    image: paritytech/substrate-playground-template-node-template
+    container_name: "validator-alice"
+    command: bash -c "/home/playground/workspace/target/debug/node-template --chain local --alice --validator --base-path /data --no-telemetry --node-key 0000000000000000000000000000000000000000000000000000000000000001"
+    user: root
+    restart: always
+    ports:
+      - 9944
+      - "30333:30333"
+    volumes:
+      - ./data-validator-1:/data
+  validator-bob:
+    image: paritytech/substrate-playground-template-node-template
+    container_name: "validator-bob"
+    command: bash -c "/home/playground/workspace/target/debug/node-template --chain local --bob --validator --no-telemetry --bootnodes /dns/validator-alice/tcp/30333/p2p/12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp"
+    user: root
+    restart: always
+    ports:
+      - 9944
+  non-validator-nodes:
+    image: paritytech/substrate-playground-template-node-template
+    deploy:
+      replicas: ${REPLICAS_NON_VALIDATORS}
+    command: bash -c "/home/playground/workspace/target/debug/node-template --chain local --unsafe-ws-external --unsafe-rpc-external --no-telemetry --rpc-cors=all --bootnodes /dns/validator-alice/tcp/30333/p2p/12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp"
+    user: root
+    restart: always
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.messenger-node-template.rule=Host(`${LOAD_BALANCER_ENDPOINT}`)"
+      - "traefik.http.routers.messenger-node-template.entrypoints=websecure"
+      - "traefik.http.routers.messenger-node-template.tls.certresolver=myresolver"
+      - "traefik.http.services.messenger-node-template.loadbalancer.server.port=9944"
+      - "traefik.http.middlewares.sslheader.headers.customrequestheaders.X-Forwarded-Proto = https"
+    ports:
+      - 9944
